@@ -54,3 +54,11 @@ The app provides a full UI with:
 - [S3 Vectors Limitations](https://docs.aws.amazon.com/AmazonS3/latest/userguide/s3-vectors-limitations.html)
 - [AOSS Supported Operations](https://docs.aws.amazon.com/opensearch-service/latest/developerguide/serverless-genref.html)
 - [AOSS Data Access Policies](https://docs.aws.amazon.com/opensearch-service/latest/developerguide/serverless-data-access.html)
+
+## Security
+
+See [CONTRIBUTING](CONTRIBUTING.md#security-issue-notifications) for more information.
+
+## License
+
+This library is licensed under the MIT-0 License. See the LICENSE file.
