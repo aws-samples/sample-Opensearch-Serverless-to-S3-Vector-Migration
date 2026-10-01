@@ -76,6 +76,12 @@ def get_aws_profiles():
     except Exception:
         return ["default"]
 
+# Default Bedrock inference profile for the chatbot LLM.
+# Uses a cross-Region inference profile (the "us." prefix) so it stays on an
+# active, non-legacy model. Override it in the sidebar if a newer one exists.
+DEFAULT_CHAT_MODEL = "us.anthropic.claude-sonnet-4-5-20250929-v1:0"
+DEFAULT_EMBED_MODEL = "amazon.titan-embed-text-v2:0"
+
 def get_regions():
     return ["us-east-1", "us-east-2", "us-west-2", "eu-central-1", "ap-southeast-2"]
 
@@ -276,12 +282,13 @@ def run_migration(profile, region, host, index_name, vector_field, dimension,
     return True, "\n".join(log)
 
 
-def query_s3_vectors(profile, region, bucket_name, index_name, query_text, top_k=5):
+def query_s3_vectors(profile, region, bucket_name, index_name, query_text,
+                     chat_model, embed_model=DEFAULT_EMBED_MODEL, top_k=5):
     session = get_boto_session(profile, region)
     bedrock = session.client("bedrock-runtime")
     s3v = session.client("s3vectors")
 
-    resp = bedrock.invoke_model(modelId="amazon.titan-embed-text-v2:0",
+    resp = bedrock.invoke_model(modelId=embed_model,
                                 body=json.dumps({"inputText": query_text}))
     embedding = json.loads(resp["body"].read())["embedding"]
 
@@ -307,7 +314,7 @@ def query_s3_vectors(profile, region, bucket_name, index_name, query_text, top_k
     context = "\n\n---\n\n".join(chunks)
     try:
         llm_resp = bedrock.invoke_model(
-            modelId="us.anthropic.claude-sonnet-4-20250514-v1:0",
+            modelId=chat_model,
             body=json.dumps({
                 "anthropic_version": "bedrock-2023-05-31", "max_tokens": 2048,
                 "messages": [{"role": "user", "content":
@@ -346,39 +353,72 @@ The tool uses the profile you select to authenticate all AWS API calls.
 
     with st.expander("**2. IAM Permissions** — required policies"):
         st.markdown("""
-Your IAM user/role needs these permissions. Attach as an inline policy:
+Your IAM user/role needs these permissions. Attach as an inline policy.
+
+Replace the placeholders before use:
+- `REGION` — e.g. `us-east-1`
+- `ACCOUNT_ID` — your 12-digit AWS account ID
+- `COLLECTION_ID` — the source AOSS collection ID (from the sidebar dropdown)
+- `YOUR-VECTOR-BUCKET` — the destination S3 vector bucket name
 
 ```json
 {
   "Version": "2012-10-17",
   "Statement": [
     {
-      "Sid": "OpenSearchServerless",
+      "Sid": "OpenSearchDiscovery",
+      "Effect": "Allow",
+      "Action": "aoss:ListCollections",
+      "Resource": "*"
+    },
+    {
+      "Sid": "OpenSearchCollectionAccess",
       "Effect": "Allow",
       "Action": [
-        "aoss:ListCollections",
         "aoss:BatchGetCollection",
         "aoss:APIAccessAll"
+      ],
+      "Resource": "arn:aws:aoss:REGION:ACCOUNT_ID:collection/COLLECTION_ID"
+    },
+    {
+      "Sid": "S3VectorsDiscoverAndCreate",
+      "Effect": "Allow",
+      "Action": [
+        "s3vectors:ListVectorBuckets",
+        "s3vectors:CreateVectorBucket"
       ],
       "Resource": "*"
     },
     {
-      "Sid": "S3Vectors",
+      "Sid": "S3VectorsBucketOperations",
       "Effect": "Allow",
-      "Action": "s3vectors:*",
-      "Resource": "*"
+      "Action": [
+        "s3vectors:GetVectorBucket",
+        "s3vectors:CreateIndex",
+        "s3vectors:GetIndex",
+        "s3vectors:ListIndexes",
+        "s3vectors:PutVectors",
+        "s3vectors:QueryVectors"
+      ],
+      "Resource": "arn:aws:s3vectors:REGION:ACCOUNT_ID:bucket/YOUR-VECTOR-BUCKET/*"
     },
     {
       "Sid": "BedrockForChatbot",
       "Effect": "Allow",
       "Action": "bedrock:InvokeModel",
-      "Resource": "*"
+      "Resource": [
+        "arn:aws:bedrock:*::foundation-model/amazon.titan-embed-text-v2:0",
+        "arn:aws:bedrock:*::foundation-model/anthropic.claude-sonnet-4-5-20250929-v1:0",
+        "arn:aws:bedrock:*:ACCOUNT_ID:inference-profile/us.anthropic.claude-sonnet-4-5-20250929-v1:0"
+      ]
     }
   ]
 }
 ```
 
 **IAM Console** → Users/Roles → Permissions → Add permissions → Create inline policy → JSON tab → paste above.
+
+> **Note:** `aoss:ListCollections` and `s3vectors:ListVectorBuckets`/`CreateVectorBucket` require `Resource: "*"` because they are account-level operations that don't support resource-level scoping. All other actions are scoped to the specific collection and bucket you use.
         """)
 
     with st.expander("**3. AOSS Data Access Policy** — collection access"):
@@ -429,6 +469,12 @@ All four are needed for the migration tool and chatbot to function.
     selected_region = st.selectbox(
         "AWS Region", get_regions(), index=0,
         help="Region where your OpenSearch collection and S3 Vectors reside.",
+    )
+    chat_model = st.text_input(
+        "Chatbot Model (Bedrock)", value=DEFAULT_CHAT_MODEL,
+        help="Bedrock model or cross-Region inference profile ID used to answer chat questions. "
+             "Use an inference profile ID (prefixed with 'us.', 'eu.', etc.) for current Claude models. "
+             "Must be enabled in your account under Bedrock → Model access.",
     )
 
     st.divider()
@@ -609,12 +655,20 @@ with migration_col:
                 st.markdown(
                     f'<div class="status-box status-success">{message.replace(chr(10), "<br>")}</div>',
                     unsafe_allow_html=True)
-                st.balloons()
+                # Fire balloons exactly once, only on a successful migration.
+                # A one-shot flag prevents the animation from replaying on later
+                # reruns (e.g. when the chatbot panel reruns on each question).
+                st.session_state["_migration_succeeded"] = True
             else:
                 st.markdown(
                     f'<div class="status-box status-error">❌ Migration Failed<br><br>'
                     f'{message.replace(chr(10), "<br>")}</div>',
                     unsafe_allow_html=True)
+
+    # Show the celebration animation only on the run where a migration just
+    # succeeded, then clear the flag so it never replays on subsequent reruns.
+    if st.session_state.pop("_migration_succeeded", False):
+        st.balloons()
 
 
 # ───────────────────────────────────────────
@@ -690,7 +744,8 @@ def chatbot_panel():
                 with st.spinner("Searching vectors and generating answer..."):
                     try:
                         answer, sources = query_s3_vectors(
-                            selected_profile, selected_region, chat_bucket, chat_index, user_input)
+                            selected_profile, selected_region, chat_bucket, chat_index,
+                            user_input, chat_model)
                         st.session_state.chat_messages.append(
                             {"role": "assistant", "content": answer, "sources": sources})
                     except Exception as e:

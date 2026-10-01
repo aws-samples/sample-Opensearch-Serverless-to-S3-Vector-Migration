@@ -2,6 +2,8 @@
 
 A Streamlit web app that migrates vector data from Amazon OpenSearch Serverless (AOSS) to Amazon S3 Vectors, with an integrated chatbot to test the migrated data.
 
+![OpenSearch to S3 Vectors Migration Tool](screenshot.png)
+
 ## Features
 
 - Auto-discovers AOSS collections, indexes, and field mappings from your AWS CLI profile
@@ -15,7 +17,7 @@ A Streamlit web app that migrates vector data from Amazon OpenSearch Serverless 
 ## Prerequisites
 
 1. **AWS CLI** installed and configured with at least one named profile (`aws configure`)
-2. **IAM permissions** for `aoss:*`, `s3vectors:*`, and `bedrock:InvokeModel`
+2. **IAM permissions** for OpenSearch Serverless (`aoss:ListCollections`, `aoss:BatchGetCollection`, `aoss:APIAccessAll`), S3 Vectors (`s3vectors:CreateVectorBucket`, `CreateIndex`, `PutVectors`, `QueryVectors`, and list/get actions), and `bedrock:InvokeModel` — scoped to your specific collection and vector bucket rather than `*`. See the in-app **IAM Permissions** panel for a ready-to-use least-privilege policy.
 3. **AOSS Data Access Policy** granting your IAM principal `aoss:DescribeIndex` and `aoss:ReadDocument` on the source collection
 4. **Python packages:**
    ```
@@ -43,7 +45,7 @@ The app provides a full UI with:
 - **Metadata types:** S3 Vectors supports string, number, and boolean only. Nested objects are serialized to JSON strings.
 - **Filterable metadata** is limited to 2 KB per vector. Large text fields (like text chunks) should be configured as non-filterable keys (up to 40 KB total).
 - **Vector dimensions** must be 1–4,096 (float32 only). The app auto-detects this from the OpenSearch index mapping.
-- Newer Bedrock models (Claude Sonnet 4) require cross-region inference profile IDs (e.g., `us.anthropic.claude-sonnet-4-*`).
+- The chatbot LLM is configurable in the sidebar and defaults to the Claude Sonnet 4.5 cross-Region inference profile (`us.anthropic.claude-sonnet-4-5-20250929-v1:0`). Current Claude models must be invoked via an inference profile ID (prefixed `us.`, `eu.`, etc.), not the raw foundation-model ID, and must be enabled under Bedrock → Model access.
 
 ## References
 
