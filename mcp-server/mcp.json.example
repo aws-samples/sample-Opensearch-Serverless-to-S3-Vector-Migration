@@ -1,0 +1,23 @@
+{
+  "mcpServers": {
+    "s3vectors-migration": {
+      "command": "python",
+      "args": ["/absolute/path/to/mcp-server/server.py"],
+      "env": {
+        "AWS_PROFILE": "default",
+        "AWS_REGION": "us-east-1",
+        "CHAT_MODEL_ID": "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+        "EMBED_MODEL_ID": "amazon.titan-embed-text-v2:0"
+      },
+      "disabled": false,
+      "autoApprove": [
+        "list_opensearch_collections",
+        "list_opensearch_indexes",
+        "describe_opensearch_index",
+        "list_s3_vector_buckets",
+        "list_s3_vector_indexes",
+        "query_s3_vector_store"
+      ]
+    }
+  }
+}
